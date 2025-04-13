@@ -5,8 +5,10 @@ use pyo3::{
     prelude::*,
     pybacked::PyBackedStr,
     types::{PyBytes, PyList, PyTuple},
+    PyAny,
     PyResult,
 };
+use numpy::PyReadonlyArray1;
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::{byte_pair_encode, CoreBPE, Rank};
@@ -34,6 +36,59 @@ impl CoreBPE {
     #[pyo3(name = "encode_ordinary")]
     fn py_encode_ordinary(&self, py: Python, text: &str) -> Vec<Rank> {
         py.allow_threads(|| self.encode_ordinary(text))
+    }
+
+    #[pyo3(name = "encode_batch_to_buffer")]
+    fn py_encode_batch_to_buffer(&self, py: Python, texts: Vec<String>, max_len: usize) -> Py<PyAny> {
+        let tokens = py.allow_threads(||{
+            // Encode each text individually
+            let mut encoded: Vec<Vec<Rank>> = texts
+                .iter()
+                .map(|text| self.encode_ordinary(text))
+                .collect();
+
+            // Pad each encoded vector with zeros
+            for vec in encoded.iter_mut() {
+                vec.resize(max_len, 0);
+            }
+
+            // Flatten into a single vector
+            let flat_encoded: Vec<Rank> = encoded.into_iter().flatten().collect();
+
+            flat_encoded
+        });
+        let buffer = TiktokenBuffer { tokens };
+        buffer.into_py(py)
+    }
+
+    #[pyo3(name = "encode_numpy_to_buffer")]
+    fn py_encode_numpy_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize) -> Py<PyAny> {
+        let texts: Vec<&[u8]> = texts
+            .as_slice()
+            .unwrap()
+            .iter()
+            .map(|obj| obj.extract::<&[u8]>(py).unwrap())
+            .collect();
+
+        let tokens = py.allow_threads(||{
+            // Encode each text individually
+            let mut encoded: Vec<Vec<Rank>> = texts
+                .iter()
+                .map(|text| self.encode_ordinary(std::str::from_utf8(text).unwrap()))
+                .collect();
+
+            // Pad each encoded vector with zeros
+            for vec in encoded.iter_mut() {
+                vec.resize(max_len, 0);
+            }
+
+            // Flatten into a single vector
+            let flat_encoded: Vec<Rank> = encoded.into_iter().flatten().collect();
+
+            flat_encoded
+        });
+        let buffer = TiktokenBuffer { tokens };
+        buffer.into_py(py)
     }
 
     #[pyo3(name = "encode")]

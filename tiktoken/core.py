@@ -76,6 +76,16 @@ class Encoding:
             text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             return self._core_bpe.encode_ordinary(text)
 
+    def encode_numpy_to_buffer(self, texts: npt.NDArray, max_len: int) -> npt.NDArray[np.uint32]:
+
+        buffer = self._core_bpe.encode_numpy_to_buffer(texts, max_len)
+        return np.frombuffer(buffer, dtype=np.uint32)
+
+    def encode_batch_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
+
+        buffer = self._core_bpe.encode_batch_to_buffer(texts, max_len)
+        return np.frombuffer(buffer, dtype=np.uint32)
+
     def encode(
         self,
         text: str,
