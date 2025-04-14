@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, AbstractSet, Collection, Literal, NoReturn, Se
 
 import regex
 
+import numpy as np
 from tiktoken import _tiktoken
 
 if TYPE_CHECKING:
-    import numpy as np
     import numpy.typing as npt
 
 
@@ -76,14 +76,19 @@ class Encoding:
             text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             return self._core_bpe.encode_ordinary(text)
 
-    def encode_numpy_to_buffer(self, texts: npt.NDArray, max_len: int) -> npt.NDArray[np.uint32]:
+    def encode_numpy_string_to_buffer(self, texts: npt.NDArray, max_len: int) -> npt.NDArray[np.uint32]:
 
-        buffer = self._core_bpe.encode_numpy_to_buffer(texts, max_len)
+        buffer = self._core_bpe.encode_numpy_string_to_buffer(texts, max_len)
         return np.frombuffer(buffer, dtype=np.uint32)
 
-    def encode_batch_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
+    def encode_numpy_bytes_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
 
-        buffer = self._core_bpe.encode_batch_to_buffer(texts, max_len)
+        buffer = self._core_bpe.encode_numpy_bytes_to_buffer(texts, max_len)
+        return np.frombuffer(buffer, dtype=np.uint32)
+
+    def encode_list_string_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
+
+        buffer = self._core_bpe.encode_list_string_to_buffer(texts, max_len)
         return np.frombuffer(buffer, dtype=np.uint32)
 
     def encode(
@@ -162,8 +167,6 @@ class Encoding:
                 disallowed_special = frozenset(disallowed_special)
             if match := _special_token_regex(disallowed_special).search(text):
                 raise_disallowed_special_token(match.group())
-
-        import numpy as np
 
         buffer = self._core_bpe.encode_to_tiktoken_buffer(text, self.special_tokens_set)
         return np.frombuffer(buffer, dtype=np.uint32)
