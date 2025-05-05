@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, AbstractSet, Collection, Literal, NoReturn, Sequence
-
-import regex
+from typing import AbstractSet, Collection, Literal, NoReturn, Sequence, TYPE_CHECKING
 
 import numpy as np
+
+import regex
 from tiktoken import _tiktoken
 
 if TYPE_CHECKING:
@@ -76,19 +76,25 @@ class Encoding:
             text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             return self._core_bpe.encode_ordinary(text)
 
-    def encode_numpy_string_to_buffer(self, texts: npt.NDArray, max_len: int) -> npt.NDArray[np.uint32]:
+    def encode_ordinary_from_numpy_string(
+        self, texts: npt.NDArray, *, max_len: int
+    ) -> npt.NDArray[np.uint32]:
 
-        buffer = self._core_bpe.encode_numpy_string_to_buffer(texts, max_len)
+        buffer = self._core_bpe.encode_ordinary_numpy_string_to_buffer(texts, max_len)
         return np.frombuffer(buffer, dtype=np.uint32)
 
-    def encode_numpy_bytes_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
+    def encode_ordinary_from_numpy_bytes(
+        self, texts: npt.NDArray, *, max_len: int
+    ) -> npt.NDArray[np.uint32]:
 
-        buffer = self._core_bpe.encode_numpy_bytes_to_buffer(texts, max_len)
+        buffer = self._core_bpe.encode_ordinary_numpy_bytes_to_buffer(texts, max_len)
         return np.frombuffer(buffer, dtype=np.uint32)
 
-    def encode_list_string_to_buffer(self, texts: list[str], max_len: int) -> npt.NDArray[np.uint32]:
+    def encode_ordinary_from_list_string(
+        self, texts: list[str], *, max_len: int
+    ) -> npt.NDArray[np.uint32]:
 
-        buffer = self._core_bpe.encode_list_string_to_buffer(texts, max_len)
+        buffer = self._core_bpe.encode_ordinary_list_string_to_buffer(texts, max_len)
         return np.frombuffer(buffer, dtype=np.uint32)
 
     def encode(
@@ -147,6 +153,83 @@ class Encoding:
             text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             return self._core_bpe.encode(text, allowed_special)
 
+    def encode_from_numpy_string(
+        self,
+        texts: npt.NDArray,
+        *,
+        max_len: int,
+        allowed_special: Literal["all"] | AbstractSet[str] = set(),  # noqa: B006
+        disallowed_special: Literal["all"] | Collection[str] = "all",
+    ) -> npt.NDArray[np.uint32]:
+
+        if allowed_special == "all":
+            allowed_special = self.special_tokens_set
+        if disallowed_special == "all":
+            disallowed_special = self.special_tokens_set - allowed_special
+        if disallowed_special:
+            if not isinstance(disallowed_special, frozenset):
+                disallowed_special = frozenset(disallowed_special)
+            for text in texts:
+                if match := _special_token_regex(disallowed_special).search(text):
+                    raise_disallowed_special_token(match.group())
+
+        buffer = self._core_bpe.encode_numpy_string_to_buffer(
+            texts, max_len, allowed_special
+        )
+        return np.frombuffer(buffer, dtype=np.uint32)
+
+    def encode_from_numpy_bytes(
+        self,
+        texts: npt.NDArray,
+        *,
+        max_len: int,
+        allowed_special: Literal["all"] | AbstractSet[str] = set(),  # noqa: B006
+        disallowed_special: Literal["all"] | Collection[str] = "all",
+    ) -> npt.NDArray[np.uint32]:
+
+        if allowed_special == "all":
+            allowed_special = self.special_tokens_set
+        if disallowed_special == "all":
+            disallowed_special = self.special_tokens_set - allowed_special
+        if disallowed_special:
+            if not isinstance(disallowed_special, frozenset):
+                disallowed_special = frozenset(disallowed_special)
+            for text in texts:
+                if match := _special_token_regex(disallowed_special).search(
+                    text.decode()
+                ):
+                    raise_disallowed_special_token(match.group())
+
+        buffer = self._core_bpe.encode_numpy_bytes_to_buffer(
+            texts, max_len, allowed_special
+        )
+        return np.frombuffer(buffer, dtype=np.uint32)
+
+    def encode_from_list_string(
+        self,
+        texts: list[str],
+        *,
+        max_len: int,
+        allowed_special: Literal["all"] | AbstractSet[str] = set(),  # noqa: B006
+        disallowed_special: Literal["all"] | Collection[str] = "all",
+    ) -> npt.NDArray[np.uint32]:
+
+        if allowed_special == "all":
+            allowed_special = self.special_tokens_set
+        if disallowed_special == "all":
+            disallowed_special = self.special_tokens_set - allowed_special
+        if disallowed_special:
+            if not isinstance(disallowed_special, frozenset):
+                disallowed_special = frozenset(disallowed_special)
+            for text in texts:
+                if match := _special_token_regex(disallowed_special).search(text):
+                    raise_disallowed_special_token(match.group())
+
+        buffer = self._core_bpe.encode_list_string_to_buffer(
+            texts, max_len, allowed_special
+        )
+        return np.frombuffer(buffer, dtype=np.uint32)
+
     def encode_to_numpy(
         self,
         text: str,
@@ -171,7 +254,9 @@ class Encoding:
         buffer = self._core_bpe.encode_to_tiktoken_buffer(text, self.special_tokens_set)
         return np.frombuffer(buffer, dtype=np.uint32)
 
-    def encode_ordinary_batch(self, text: list[str], *, num_threads: int = 8) -> list[list[int]]:
+    def encode_ordinary_batch(
+        self, text: list[str], *, num_threads: int = 8
+    ) -> list[list[int]]:
         """Encodes a list of strings into tokens, in parallel, ignoring special tokens.
 
         This is equivalent to `encode_batch(text, disallowed_special=())` (but slightly faster).
@@ -210,7 +295,9 @@ class Encoding:
             disallowed_special = frozenset(disallowed_special)
 
         encoder = functools.partial(
-            self.encode, allowed_special=allowed_special, disallowed_special=disallowed_special
+            self.encode,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
         )
         with ThreadPoolExecutor(num_threads) as e:
             return list(e.map(encoder, text))
@@ -282,6 +369,46 @@ class Encoding:
         """
         return self._core_bpe.decode_bytes(tokens)
 
+    def decode_strip_bytes(self, tokens: Sequence[int]) -> bytes:
+        """Decodes a list of tokens into bytes, stripping trailing pad tokens.
+
+        ```
+        >>> enc.decode_strip_bytes([31373, 995, 0, 0])
+        b'hello world'
+        ```
+        """
+        return self._core_bpe.decode_strip_bytes(tokens)
+
+    def decode_strip_string(self, tokens: Sequence[int]) -> str:
+        """Decodes a list of tokens into a string, stripping trailing pad tokens.
+
+        ```
+        >>> enc.decode_strip_string([31373, 995, 0, 0])
+        'hello world'
+        ```
+        """
+        return self._core_bpe.decode_strip_string(tokens)
+
+    def decode_to_list_string(self, tokens: npt.NDArray) -> npt.NDArray:
+        """Decodes a 2D array of tokens into list of string, stripping trailing pad tokens.
+
+        ```
+        >>> enc.decode_to_list_string([[31373, 995, 0, 0], [11274, 16390, 995, 0]])
+        ['hello world', 'goodbye world']
+        ```
+        """
+        return self._core_bpe.decode_batch_string(tokens)
+
+    def decode_to_numpy_string(self, tokens: npt.NDArray) -> npt.NDArray:
+        """Decodes a 2D array of tokens into numpy array of string, stripping trailing pad tokens.
+
+        ```
+        >>> enc.decode_to_numpy_string([[31373, 995, 0, 0], [11274, 16390, 995, 0]])
+        array(['hello world', 'goodbye world'], dtype='<U12')
+        ```
+        """
+        return np.array(self._core_bpe.decode_batch_string(tokens))
+
     def decode(self, tokens: Sequence[int], errors: str = "replace") -> str:
         """Decodes a list of tokens into a string.
 
@@ -345,7 +472,11 @@ class Encoding:
         return text, offsets
 
     def decode_batch(
-        self, batch: Sequence[Sequence[int]], *, errors: str = "replace", num_threads: int = 8
+        self,
+        batch: Sequence[Sequence[int]],
+        *,
+        errors: str = "replace",
+        num_threads: int = 8,
     ) -> list[str]:
         """Decodes a batch (list of lists of tokens) into a list of strings."""
         decoder = functools.partial(self.decode, errors=errors)

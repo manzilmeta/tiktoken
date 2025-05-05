@@ -8,7 +8,7 @@ use pyo3::{
     PyAny,
     PyResult,
 };
-use numpy::PyReadonlyArray1;
+use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::{byte_pair_encode, CoreBPE, Rank};
@@ -38,8 +38,8 @@ impl CoreBPE {
         py.allow_threads(|| self.encode_ordinary(text))
     }
 
-    #[pyo3(name = "encode_list_string_to_buffer")]
-    fn py_encode_batch_to_buffer(&self, py: Python, texts: Vec<String>, max_len: usize) -> Py<PyAny> {
+    #[pyo3(name = "encode_ordinary_list_string_to_buffer")]
+    fn py_encode_ordinary_batch_to_buffer(&self, py: Python, texts: Vec<String>, max_len: usize) -> Py<PyAny> {
         let tokens = py.allow_threads(||{
             // Encode each text individually
             let mut encoded: Vec<Vec<Rank>> = texts
@@ -61,8 +61,8 @@ impl CoreBPE {
         buffer.into_py(py)
     }
 
-    #[pyo3(name = "encode_numpy_bytes_to_buffer")]
-    fn py_encode_numpy_bytes_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize) -> Py<PyAny> {
+    #[pyo3(name = "encode_ordinary_numpy_bytes_to_buffer")]
+    fn py_encode_ordinary_numpy_bytes_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize) -> Py<PyAny> {
         let texts: Vec<&[u8]> = texts
             .as_slice()
             .unwrap()
@@ -91,8 +91,8 @@ impl CoreBPE {
         buffer.into_py(py)
     }
 
-    #[pyo3(name = "encode_numpy_string_to_buffer")]
-    fn py_encode_numpy_string_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize) -> Py<PyAny> {
+    #[pyo3(name = "encode_ordinary_numpy_string_to_buffer")]
+    fn py_encode_ordinary_numpy_string_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize) -> Py<PyAny> {
         let texts: Vec<String> = texts
             .as_slice()
             .unwrap()
@@ -133,6 +133,101 @@ impl CoreBPE {
                 allowed_special.iter().map(|s| s.as_ref()).collect();
             self.encode(text, &allowed_special).0
         })
+    }
+
+    #[pyo3(name = "encode_list_string_to_buffer")]
+    fn py_encode_batch_to_buffer(&self, py: Python, texts: Vec<String>, max_len: usize, allowed_special: HashSet<PyBackedStr>) -> Py<PyAny> {
+        let tokens = py.allow_threads(||{
+            // Get allowed special tokens
+            let allowed_special: HashSet<&str> =
+                allowed_special.iter().map(|s| s.as_ref()).collect();
+
+            // Encode each text individually
+            let mut encoded: Vec<Vec<Rank>> = texts
+                .iter()
+                .map(|text| self.encode(text, &allowed_special).0)
+                .collect();
+
+            // Pad each encoded vector with zeros
+            for vec in encoded.iter_mut() {
+                vec.resize(max_len, 0);
+            }
+
+            // Flatten into a single vector
+            let flat_encoded: Vec<Rank> = encoded.into_iter().flatten().collect();
+
+            flat_encoded
+        });
+        let buffer = TiktokenBuffer { tokens };
+        buffer.into_py(py)
+    }
+
+    #[pyo3(name = "encode_numpy_bytes_to_buffer")]
+    fn py_encode_numpy_bytes_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize, allowed_special: HashSet<PyBackedStr>) -> Py<PyAny> {
+        let texts: Vec<&[u8]> = texts
+            .as_slice()
+            .unwrap()
+            .iter()
+            .map(|obj| obj.extract::<&[u8]>(py).unwrap())
+            .collect();
+
+        let tokens = py.allow_threads(||{
+            // Get allowed special tokens
+            let allowed_special: HashSet<&str> =
+                allowed_special.iter().map(|s| s.as_ref()).collect();
+
+            // Encode each text individually
+            let mut encoded: Vec<Vec<Rank>> = texts
+                .iter()
+                .map(|text| self.encode(std::str::from_utf8(text).unwrap(), &allowed_special).0)
+                .collect();
+
+            // Pad each encoded vector with zeros
+            for vec in encoded.iter_mut() {
+                vec.resize(max_len, 0);
+            }
+
+            // Flatten into a single vector
+            let flat_encoded: Vec<Rank> = encoded.into_iter().flatten().collect();
+
+            flat_encoded
+        });
+        let buffer = TiktokenBuffer { tokens };
+        buffer.into_py(py)
+    }
+
+    #[pyo3(name = "encode_numpy_string_to_buffer")]
+    fn py_encode_numpy_string_to_buffer(&self, py: Python, texts: PyReadonlyArray1<'_, PyObject>, max_len: usize, allowed_special: HashSet<PyBackedStr>) -> Py<PyAny> {
+        let texts: Vec<String> = texts
+            .as_slice()
+            .unwrap()
+            .iter()
+            .map(|obj| obj.extract::<String>(py).unwrap())
+            .collect();
+
+        let tokens = py.allow_threads(||{
+            // Get allowed special tokens
+            let allowed_special: HashSet<&str> =
+                allowed_special.iter().map(|s| s.as_ref()).collect();
+
+            // Encode each text individually
+            let mut encoded: Vec<Vec<Rank>> = texts
+                .iter()
+                .map(|text| self.encode(text, &allowed_special).0)
+                .collect();
+
+            // Pad each encoded vector with zeros
+            for vec in encoded.iter_mut() {
+                vec.resize(max_len, 0);
+            }
+
+            // Flatten into a single vector
+            let flat_encoded: Vec<Rank> = encoded.into_iter().flatten().collect();
+
+            flat_encoded
+        });
+        let buffer = TiktokenBuffer { tokens };
+        buffer.into_py(py)
     }
 
     fn encode_to_tiktoken_buffer(
@@ -245,6 +340,61 @@ impl CoreBPE {
             Err(e) => Err(pyo3::exceptions::PyKeyError::new_err(format!("{}", e))),
         }
     }
+
+    #[pyo3(name = "decode_strip_bytes")]
+    fn py_decode_strip_bytes(&self, py: Python, mut tokens: Vec<Rank>) -> Result<Py<PyBytes>, PyErr> {
+        if let Some(pos) = tokens.iter().rposition(|&x| x != 0) {
+            tokens.truncate(pos + 1);
+        } else {
+            tokens.clear();
+        }
+
+        match py.allow_threads(|| self.decode_bytes(&tokens)) {
+            Ok(bytes) => Ok(PyBytes::new_bound(py, &bytes).into()),
+            Err(e) => Err(pyo3::exceptions::PyKeyError::new_err(format!("{}", e))),
+        }
+    }
+
+    #[pyo3(name = "decode_strip_string")]
+    fn py_decode_strip_string(&self, py: Python, mut tokens: Vec<Rank>) -> Result<String, PyErr> {
+        if let Some(pos) = tokens.iter().rposition(|&x| x != 0) {
+            tokens.truncate(pos + 1);
+        } else {
+            tokens.clear();
+        }
+
+        match py.allow_threads(|| self.decode_bytes(&tokens)) {
+            Ok(bytes) => String::from_utf8(bytes).map_err(|e| pyo3::exceptions::PyUnicodeDecodeError::new_err(format!("{}", e))),
+            Err(e) => Err(pyo3::exceptions::PyKeyError::new_err(format!("{}", e))),
+        }
+    }
+
+    #[pyo3(name = "decode_batch_string")]
+    fn py_decode_batch_string(&self, py: Python, array: PyReadonlyArray2<'_, Rank>) -> Result<Py<PyAny>, PyErr> {
+        let tokens_2d = array.as_array();
+
+        let result: Result<Vec<String>, PyErr> = py.allow_threads(||tokens_2d
+            .rows()
+            .into_iter()
+            .map(|row| {
+                let row_vec = row.to_vec();
+                let truncated_row = if let Some(pos) = row_vec.iter().rposition(|&x| x != 0) {
+                    &row_vec[..=pos]
+                } else {
+                    &[]
+                };
+                self.decode_bytes(truncated_row)
+                .map_err(|e| pyo3::exceptions::PyKeyError::new_err(format!("{}", e)))
+                .and_then(|bytes| {
+                    String::from_utf8(bytes)
+                        .map_err(|e| pyo3::exceptions::PyUnicodeDecodeError::new_err(format!("{}", e)))
+                })
+            })
+            .collect());
+
+            Ok(PyList::new_bound(py, result?).into_py(py))
+    }
+
 
     fn decode_single_token_bytes(&self, py: Python, token: Rank) -> PyResult<Py<PyBytes>> {
         if let Some(bytes) = self.decoder.get(&token) {
