@@ -407,7 +407,7 @@ class Encoding:
         array(['hello world', 'goodbye world'], dtype='<U12')
         ```
         """
-        return np.array(self._core_bpe.decode_batch_string(tokens))
+        return np.array(self._core_bpe.decode_batch_string(tokens), dtype=object)
 
     def decode(self, tokens: Sequence[int], errors: str = "replace") -> str:
         """Decodes a list of tokens into a string.
